@@ -20,7 +20,6 @@ class Method:
         if condition != None and condition != '':
             self.prepare_condition(condition)
 
-        print self.sql
         self.method_action()
 
     def method_action(self):
@@ -78,11 +77,6 @@ class TestResultMethod(GetMethod):
         JOIN probe ON test_result.probe_id=probe.probe_id
         JOIN destination ON test_result.destination_id=destination.destination_id
         JOIN service ON service.service_id=destination.service_id""".format(select=select)
-
-class CountResult(GetMethod):
-
-    def prepare_statement(self, select, table):
-        self.sql = """SELECT {} FROM test_result t1 JOIN destination t2 ON t1.destination_id=t2.destination_id""".format(select)
 
 
 class RunningMethod(GetMethod):
@@ -206,7 +200,6 @@ if __name__ == '__main__':
         'test_result': TestResultMethod,
         'user': UserMethod,
         'avg': AvgTestResultMethod,
-        'count': CountResult
     }
 
     dict_select = {
@@ -216,8 +209,7 @@ if __name__ == '__main__':
         'service': '*',
         'test_result': '*',
         'user': 'password, role',
-        'avg': 'round(avg(rtt), 3) as "rtt", round(avg(download), 3) as "download", round(avg(upload), 3) as "upload"',
-        'count': 'count(id)'
+        'avg': 'round(avg(rtt), 2) as "rtt", round(avg(download), 2) as "download", round(avg(upload), 2) as "upload"'
     }
 
     url = os.environ['REDIRECT_URL']
