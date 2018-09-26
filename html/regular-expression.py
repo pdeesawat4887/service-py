@@ -123,6 +123,19 @@ sql += " WHERE "+' and '.join(map(lambda item: "{}='{}'".format(item.split('=')[
 #
 # print goo
 # print type(goo)
+#
+# if type(foo) is str:
+#     print foo
 
-if type(foo) is str:
-    print foo
+bar = "hello %s world %s foo %s %s"
+test = [('apple', 'banana', 'cat', 'leo'), ('1', 2, 'three', 'FOUR')]
+
+hello =  map(lambda item: bar % item, test)
+
+print hello
+print type(hello)
+
+# for i in test:
+#     print bar % i
+
+import dns.resolver

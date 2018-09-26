@@ -3,45 +3,49 @@
 import socket
 import re
 import uuid
-
 import database
 import service
-
+import paramiko
+from stat import S_ISDIR
+import base64
 import os
+import random
+import string
 
 
 class Probe:
 
-    def __init__(self):
+    def __init__(self, path):
+        LOCAL_DIR = '/root/release3/'
+        REMOTE_DIR = '/root/release3_service/'
+        self.path = path
         self.mac_address = self.get_mac_address()
         self.db = database.MySQLDatabase()
         self.ip = self.get_ip()
-        self.id = self.get_probe_id(self.mac_address)
+        self.id = self.get_probe_id()
         self.set_probe()
+        # self.download_dir(REMOTE_DIR, LOCAL_DIR)
+        # self.chmod_file(LOCAL_DIR)
         self.worker()
 
     def set_probe(self):
         query_sql = "SELECT * FROM probe WHERE probe_id='{}'".format(self.id)
         result = self.db.select(query_sql)
         if result.__len__() == 1:
-            print """UPDATE"""
-            sql = "UPDATE probe SET ip_address='{}', mac_address='{}', status='{}', path=NULL, last_change=NOW()".format(
-                self.ip, self.mac_address, 0)
+            print "UPDATE"
+            sql = "UPDATE probe SET ip_address='{}', mac_address='{}', status='{}', last_update=NOW() WHERE probe_id='{}'".format(
+                self.ip, self.mac_address, 0, self.id)
             self.db.mycursor.execute(sql)
             self.db.connection.commit()
         else:
-            print """INSERT NEW"""
-            sql = "INSERT INTO probe VALUES ('{}', NULL, '{}', '{}', '{}', NULL, NOW())".format(
+            print "INSERT NEW"
+            sql = "INSERT INTO probe VALUES ('{}', NULL, '{}', '{}', '{}', NOW())".format(
                 self.id, self.ip, self.mac_address, 0)
-            sql_service = self.db.select("SELECT service_id FROM service")
-
             self.db.mycursor.execute(sql)
             self.db.connection.commit()
 
-            result_running = []
-            for serv in sql_service:
-                temp = (self.id, serv[0], 0)
-                result_running.append(temp)
+            sql_service = self.db.select("SELECT service_id FROM service")
+            result_running = map(lambda item: (self.id, item[0], 0), sql_service)
             self.db.insert('running_service', result_running)
 
     def get_mac_address(self):
@@ -62,12 +66,19 @@ class Probe:
             s.close()
         return ip
 
-    def get_probe_id(self, mac):
+    def get_probe_id(self):
         ''' Create EUI64 from Mac Address for probe_id to collect in database '''
-        mac = mac.replace(':', '')
-        eui64 = mac[0:6] + 'fffe' + mac[6:]
-        eui64 = hex(int(eui64[0:2], 16) ^ 2)[2:].zfill(2) + eui64[2:]
-        return eui64
+        # mac = mac.replace(':', '')
+        # eui64 = mac[0:6] + 'fffe' + mac[6:]
+        # eui64 = hex(int(eui64[0:2], 16) ^ 2)[2:].zfill(2) + eui64[2:]
+        # return eui64
+        FILE_PATH = "conf/configuration"
+        if os.stat(FILE_PATH).st_size == 0:
+            id = ''.join(random.choice(string.ascii_uppercase + string.digits) for i in range(16))
+            open(FILE_PATH, "wb").write(id)
+        else:
+            id = open(FILE_PATH, "r").readline()
+        return id
 
     def get_active_service(self):
         query_sql = """select service.service_id, service.file_name, service.command 
@@ -75,6 +86,33 @@ class Probe:
         where running_service.running_status=0 and probe_id='{}'""".format(self.id)
         result = self.db.select(query_sql)
         return result
+
+    def download_dir(self, remote_dir, local_dir):
+        hostname = '192.168.254.31'
+        username = 'root'
+        password = base64.b64decode('cEBzc3dvcmQ=')
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(hostname=hostname, username=username, password=password)
+        sftp = ssh.open_sftp()
+        os.path.exists(local_dir) or os.makedirs(local_dir)
+        dir_items = sftp.listdir_attr(remote_dir)
+        for item in dir_items:
+            # assuming the local system is Windows and the remote system is Linux
+            # os.path.join won't help here, so construct remote_path manually
+            remote_path = remote_dir + '/' + item.filename
+            local_path = os.path.join(local_dir, item.filename)
+            if S_ISDIR(item.st_mode):
+                self.download_dir(remote_path, local_path)
+            else:
+                sftp.get(remote_path, local_path)
+
+    def chmod_file(self, local_path):
+        for root, dirs, files in os.walk(local_path):
+            for d in dirs:
+                os.chmod(os.path.join(root, d), 0705)
+            for f in files:
+                os.chmod(os.path.join(root, f), 0705)
 
     def worker(self):
         service_active = self.get_active_service()
@@ -88,6 +126,4 @@ class Probe:
             if service_file is None:
                 service_obj = service.Service(service_id, self.id, service_command)
             else:
-                # sys.argv = [service_id, self.id, service_command]
-                # execfile('{}'.format(service_file))
-                os.system('python {} {} {} {}'.format(service_file, service_id, self.id, service_command))
+                os.system('python {}/{} {} {} {}'.format(self.path, service_file, service_id, self.id, service_command))

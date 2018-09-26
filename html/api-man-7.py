@@ -1,5 +1,5 @@
 #!/usr/bin/python
-
+import decimal
 import json
 import os
 import sys
@@ -20,12 +20,13 @@ class Method:
         if condition != None and condition != '':
             self.prepare_condition(condition)
 
+        print self.sql
         self.method_action()
 
     def method_action(self):
-        db = mariadb.MySQLDatabase()
-        db.mycursor.execute(self.sql)
-        db.connection.commit()
+        self.db = mariadb.MySQLDatabase()
+        self.db.mycursor.execute(self.sql)
+        self.db.connection.commit()
 
     def prepare_statement(self, select, table):
         self.sql = "SELECT {select} FROM {table}".format(select=select, table=table)
@@ -56,23 +57,50 @@ class GetMethod(Method):
         """JSON serializer for objects not serializable by default json code"""
         if isinstance(obj, (datetime, date)):
             return obj.isoformat()
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
         print TypeError("Type %s not serializable" % type(obj))
 
 
 class TestResultMethod(GetMethod):
 
+    def action(self, select, table, table_condition, condition):
+        self.prepare_statement(select, table)
+
+        if condition != None and condition != '':
+            self.prepare_condition(condition)
+
+        self.sql += "ORDER BY timestamp DESC"
+        self.method_action()
+
     def prepare_statement(self, select, table):
-        self.sql = """SELECT {} FROM test_result 
+        self.sql = """SELECT {select} FROM test_result
+        JOIN probe ON test_result.probe_id=probe.probe_id
         JOIN destination ON test_result.destination_id=destination.destination_id
-        JOIN service ON service.service_id=destination.service_id""".format(select)
+        JOIN service ON service.service_id=destination.service_id""".format(select=select)
+
+class CountResult(GetMethod):
+
+    def prepare_statement(self, select, table):
+        self.sql = """SELECT {} FROM test_result t1 JOIN destination t2 ON t1.destination_id=t2.destination_id""".format(select)
 
 
 class RunningMethod(GetMethod):
 
     def prepare_statement(self, select, table):
-        self.sql = """SELECT {} FROM running_service
-        JOIN service ON running_service.service_id=service.service_id
-        JOIN probe ON running_service.probe_id=probe.probe_id""".format(select)
+        self.sql = """SELECT {select} FROM running_service JOIN service ON running_service.service_id=service.service_id""".format(select=select)
+
+class AvgTestResultMethod(GetMethod):
+
+    def action(self, select, table, table_condition, condition):
+        self.table = "destination"
+        self.sql = """SELECT {select} FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id""".format(select=select)
+
+        if condition != None and condition != '':
+            self.prepare_condition(condition)
+
+        self.sql += "and timestamp > NOW() - INTERVAL 1 HOUR"
+        self.method_action()
 
 
 class UserMethod(GetMethod):
@@ -95,27 +123,62 @@ class PostMethod(Method):
         self.sql = "INSERT INTO {table} VALUES (".format(table=table) + ",".join(["%s"] * len(self.tuple_insert)) + ")"
         self.method_action()
 
+        if table == 'service':
+            self.insert_service_reference(self.db.mycursor.lastrowid)
+
     def method_action(self):
-        db = mariadb.MySQLDatabase()
-        db.mycursor.execute(self.sql, self.tuple_insert)
-        db.connection.commit()
+        self.db = mariadb.MySQLDatabase()
+        self.db.mycursor.execute(self.sql, self.tuple_insert)
+        self.db.connection.commit()
 
     def prepare_insert(self, table, condition):
         if table == 'destination':
             return ('NULL', condition.getvalue('service_id'), condition.getvalue('destination'),
-                    condition.getvalue('destination_port', '0'))
+                    condition.getvalue('destination_port', '0'), condition.getvalue('description', None))
         elif table == 'running_service':
             return (
             condition.getvalue('probe_id'), condition.getvalue('service_id'), condition.getvalue('running_status'))
         elif table == 'service':
-            return (condition.getvalue('service_id', 'NULL'), condition.getvalue('service_name'),
-                    condition.getvalue('file_name', 'NULL'), condition.getvalue('command', 'NULL'))
+            return ('NULL', condition.getvalue('service_name'),
+                    condition.getvalue('file_name', None), condition.getvalue('command', None))
+
+    def insert_service_reference(self, service_id):
+        sql = "SELECT probe_id FROM probe"
+        all_probe = self.db.select(sql)
+        list_data = map(lambda item: (item[0], service_id, 1), all_probe)
+        self.db.insert('running_service', list_data)
 
 
 class DeleteMethod(Method):
 
+    def action(self, select, table, table_condition, condition):
+        self.database = mariadb.MySQLDatabase()
+        if table == 'service':
+            self.delete_all_service_reference(condition)
+        elif table == 'destination':
+            self.delete_all_destination(condition)
+
+        self.prepare_statement(select, table)
+        if condition != None and condition != '':
+            self.prepare_condition(condition)
+        self.method_action()
+
     def prepare_statement(self, select, table):
         self.sql = "DELETE FROM {table}".format(table=table)
+
+    def delete_all_service_reference(self, condition):
+        service_id = condition.getvalue('service_id')
+        sql_running = "DELETE FROM running_service WHERE service_id={}".format(service_id)
+        sql_test_result = "DELETE test_result FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id WHERE service_id={}".format(service_id)
+        sql_destination = "DELETE FROM destination WHERE destination.service_id={}".format(service_id)
+        map(lambda sql: self.database.mycursor.execute(sql), [sql_running, sql_test_result, sql_destination])
+        self.database.connection.commit()
+
+    def delete_all_destination(self, condition):
+        destination_id = condition.getvalue('destination_id')
+        sql_test_result = "DELETE FROM test_result WHERE destination_id={}".format(destination_id)
+        self.database.mycursor.execute(sql_test_result)
+        self.database.connection.commit()
 
 
 class PatchMethod(Method):
@@ -142,6 +205,8 @@ if __name__ == '__main__':
         'service': GetMethod,
         'test_result': TestResultMethod,
         'user': UserMethod,
+        'avg': AvgTestResultMethod,
+        'count': CountResult
     }
 
     dict_select = {
@@ -151,6 +216,8 @@ if __name__ == '__main__':
         'service': '*',
         'test_result': '*',
         'user': 'password, role',
+        'avg': 'round(avg(rtt), 3) as "rtt", round(avg(download), 3) as "download", round(avg(upload), 3) as "upload"',
+        'count': 'count(id)'
     }
 
     url = os.environ['REDIRECT_URL']

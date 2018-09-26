@@ -50,7 +50,7 @@ class Service:
         try:
             s.connect((destination, port))
             if self.command != None:
-                s.send(self.command)
+                s.send(self.command+'\n')
                 resp = s.recv(1024)
             # print resp
             return 0, (time.time() - start) * 1000, None, None
@@ -65,9 +65,5 @@ class Service:
         return round(float(value), digit)
 
     def convert_bps_to_mbps(self, num_of_bytes):
-        bit = bitmath.Bit(num_of_bytes)
-        return bit.to_Mib().value
-
-    def convert_bps_to_mbps2(self, num_of_bytes):
         bit = bitmath.Byte(num_of_bytes)
         return bit.to_MiB().value
