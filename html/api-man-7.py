@@ -7,6 +7,7 @@ import main.database as mariadb
 from datetime import date, datetime
 import cgi
 
+
 class Method:
 
     def __init__(self, select, table, table_condition, condition):
@@ -82,13 +83,16 @@ class TestResultMethod(GetMethod):
 class RunningMethod(GetMethod):
 
     def prepare_statement(self, select, table):
-        self.sql = """SELECT {select} FROM running_service JOIN service ON running_service.service_id=service.service_id""".format(select=select)
+        self.sql = """SELECT {select} FROM running_service JOIN service ON running_service.service_id=service.service_id""".format(
+            select=select)
+
 
 class AvgTestResultMethod(GetMethod):
 
     def action(self, select, table, table_condition, condition):
         self.table = "destination"
-        self.sql = """SELECT {select} FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id""".format(select=select)
+        self.sql = """SELECT {select} FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id""".format(
+            select=select)
 
         if condition != None and condition != '':
             self.prepare_condition(condition)
@@ -107,6 +111,19 @@ class UserMethod(GetMethod):
             self.prepare_statement(select, table)
             self.prepare_condition(condition)
             self.method_action()
+
+
+class CountTestResult(GetMethod):
+
+    def prepare_condition(self, condition):
+        self.sql += " WHERE " + ' and '.join(
+            map(lambda item: "{}='{}'".format(item.split('=')[0], item.split('=')[1]),
+                condition.split('&')))
+
+
+    def prepare_statement(self, select, table):
+        self.sql = """SELECT {} FROM test_result t1 JOIN destination t2 ON t1.destination_id=t2.destination_id""".format(
+            select)
 
 
 class PostMethod(Method):
@@ -131,7 +148,7 @@ class PostMethod(Method):
                     condition.getvalue('destination_port', '0'), condition.getvalue('description', None))
         elif table == 'running_service':
             return (
-            condition.getvalue('probe_id'), condition.getvalue('service_id'), condition.getvalue('running_status'))
+                condition.getvalue('probe_id'), condition.getvalue('service_id'), condition.getvalue('running_status'))
         elif table == 'service':
             return ('NULL', condition.getvalue('service_name'),
                     condition.getvalue('file_name', None), condition.getvalue('command', None))
@@ -163,7 +180,8 @@ class DeleteMethod(Method):
     def delete_all_service_reference(self, condition):
         service_id = condition.getvalue('service_id')
         sql_running = "DELETE FROM running_service WHERE service_id={}".format(service_id)
-        sql_test_result = "DELETE test_result FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id WHERE service_id={}".format(service_id)
+        sql_test_result = "DELETE test_result FROM test_result JOIN destination ON test_result.destination_id=destination.destination_id WHERE service_id={}".format(
+            service_id)
         sql_destination = "DELETE FROM destination WHERE destination.service_id={}".format(service_id)
         map(lambda sql: self.database.mycursor.execute(sql), [sql_running, sql_test_result, sql_destination])
         self.database.connection.commit()
@@ -200,6 +218,7 @@ if __name__ == '__main__':
         'test_result': TestResultMethod,
         'user': UserMethod,
         'avg': AvgTestResultMethod,
+        'count': CountTestResult,
     }
 
     dict_select = {
@@ -209,7 +228,8 @@ if __name__ == '__main__':
         'service': '*',
         'test_result': '*',
         'user': 'password, role',
-        'avg': 'round(avg(rtt), 2) as "rtt", round(avg(download), 2) as "download", round(avg(upload), 2) as "upload"'
+        'avg': 'round(avg(rtt), 2) as "rtt", round(avg(download), 2) as "download", round(avg(upload), 2) as "upload"',
+        'count': 'count(id) as "count"'
     }
 
     url = os.environ['REDIRECT_URL']

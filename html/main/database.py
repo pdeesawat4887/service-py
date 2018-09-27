@@ -6,9 +6,9 @@ import mysql.connector
 class MySQLDatabase:
 
     def __init__(self):
-        self.host = '192.168.254.31'
-        self.user = 'monitor'
-        self.password = 'p@ssword'
+        self.host = 'localhost'
+        self.user = 'localuser'
+        self.password = 'service_monitor'
         # self.database = 'project'
         self.database = 'project_monitor'
 
@@ -41,6 +41,10 @@ class MySQLDatabase:
         query += "VALUES (" + ",".join(["%s"] * len(list_data[0])) + ")"
 
         self.mycursor.executemany(query, list_data)
+        self.connection.commit()
+
+    def delete(self, sql_delete):
+        self.mycursor.execute(sql_delete)
         self.connection.commit()
 
     def close_connection(self):

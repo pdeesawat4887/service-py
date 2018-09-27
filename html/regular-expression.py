@@ -139,3 +139,6 @@ print type(hello)
 #     print bar % i
 
 import dns.resolver
+
+if len(form) != 0:
+    print 'hello'
